@@ -10,9 +10,7 @@ require (
 	github.com/corpix/uarand v0.1.1 // indirect
 	github.com/google/uuid v1.1.1
 	github.com/icrowley/fake v0.0.0-20180203215853-4178557ae428
-	github.com/juju/ansiterm v0.0.0-20180109212912-720a0952cc2a // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
-	github.com/lunixbochs/vtclean v1.0.0 // indirect
 	github.com/manifoldco/promptui v0.3.1
 	github.com/pkg/errors v0.8.1
 	github.com/pquerna/otp v1.0.0
@@ -33,4 +31,4 @@ require (
 	howett.net/plist v0.0.0-20200419221736-3b63eb3a43b5 // indirect
 )
 
-replace github.com/smallstep/certificates v0.14.4 => github.com/SaeAccess/certificates v0.14.4
+replace github.com/smallstep/certificates => github.com/SaeAccess/certificates v0.0.0-20200817080949-345af273632c
