@@ -3,6 +3,7 @@ package certificate
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"net"
 	"net/url"
 	"strings"
 
@@ -18,11 +19,12 @@ var urlPrefixes = []string{"https://", "tcp://", "tls://"}
 // If the address does not contain a port then default to port 443.
 //
 // Params
-//   *addr*:     e.g. smallstep.com
-//   *roots*:    a file, a directory, or a comma-separated list of files.
-//   *insecure*: do not verify that the server's certificate has been signed by
-//               a trusted root
-func getPeerCertificates(addr, roots string, insecure bool) ([]*x509.Certificate, error) {
+//   *addr*:       can be a host (e.g. smallstep.com) or an IP (e.g. 127.0.0.1)
+//   *serverName*: use a specific Server Name Indication (e.g. smallstep.com)
+//   *roots*:      a file, a directory, or a comma-separated list of files.
+//   *insecure*:   do not verify that the server's certificate has been signed by
+//                 a trusted root
+func getPeerCertificates(addr, serverName, roots string, insecure bool) ([]*x509.Certificate, error) {
 	var (
 		err     error
 		rootCAs *x509.CertPool
@@ -33,12 +35,15 @@ func getPeerCertificates(addr, roots string, insecure bool) ([]*x509.Certificate
 			return nil, errors.Wrapf(err, "failure to load root certificate pool from input path '%s'", roots)
 		}
 	}
-	if !strings.Contains(addr, ":") {
-		addr += ":443"
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		addr = net.JoinHostPort(addr, "443")
 	}
 	tlsConfig := &tls.Config{RootCAs: rootCAs}
 	if insecure {
 		tlsConfig.InsecureSkipVerify = true
+	}
+	if serverName != "" {
+		tlsConfig.ServerName = serverName
 	}
 	conn, err := tls.Dial("tcp", addr, tlsConfig)
 	if err != nil {

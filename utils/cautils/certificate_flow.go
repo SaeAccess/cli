@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/smallstep/cli/crypto/pemutil"
 	"github.com/smallstep/cli/crypto/x509util"
 	"github.com/smallstep/cli/errs"
+	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/token"
 	"github.com/smallstep/cli/ui"
 	"github.com/smallstep/cli/utils"
@@ -69,7 +71,10 @@ func (f *CertificateFlow) GetClient(ctx *cli.Context, tok string, options ...ca.
 
 	// Create online client
 	root := ctx.String("root")
-	caURL := ctx.String("ca-url")
+	caURL, err := flags.ParseCaURLIfExists(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	jwt, err := token.ParseInsecure(tok)
 	if err != nil {
@@ -107,8 +112,10 @@ func (f *CertificateFlow) GenerateToken(ctx *cli.Context, subject string, sans [
 	}
 
 	// Use online CA to get the provisioners and generate the token
-	caURL := ctx.String("ca-url")
-	if len(caURL) == 0 {
+	caURL, err := flags.ParseCaURLIfExists(ctx)
+	if err != nil {
+		return "", err
+	} else if len(caURL) == 0 {
 		return "", errs.RequiredUnlessFlag(ctx, "ca-url", "token")
 	}
 
@@ -120,7 +127,6 @@ func (f *CertificateFlow) GenerateToken(ctx *cli.Context, subject string, sans [
 		}
 	}
 
-	var err error
 	if subject == "" {
 		subject, err = ui.Prompt("What DNS names or IP addresses would you like to use? (e.g. internal.smallstep.com)", ui.WithValidateNotEmpty())
 		if err != nil {
@@ -139,8 +145,10 @@ func (f *CertificateFlow) GenerateSSHToken(ctx *cli.Context, subject string, typ
 	}
 
 	// Use online CA to get the provisioners and generate the token
-	caURL := ctx.String("ca-url")
-	if len(caURL) == 0 {
+	caURL, err := flags.ParseCaURLIfExists(ctx)
+	if err != nil {
+		return "", err
+	} else if len(caURL) == 0 {
 		return "", errs.RequiredUnlessFlag(ctx, "ca-url", "token")
 	}
 
@@ -152,7 +160,6 @@ func (f *CertificateFlow) GenerateSSHToken(ctx *cli.Context, subject string, typ
 		}
 	}
 
-	var err error
 	if subject == "" {
 		subject, err = ui.Prompt("What DNS names or IP addresses would you like to use? (e.g. internal.smallstep.com)", ui.WithValidateNotEmpty())
 		if err != nil {
@@ -165,9 +172,9 @@ func (f *CertificateFlow) GenerateSSHToken(ctx *cli.Context, subject string, typ
 
 // GenerateIdentityToken generates a token using only an OIDC provisioner.
 func (f *CertificateFlow) GenerateIdentityToken(ctx *cli.Context) (string, error) {
-	caURL := ctx.String("ca-url")
-	if len(caURL) == 0 {
-		return "", errs.RequiredFlag(ctx, "ca-url")
+	caURL, err := flags.ParseCaURL(ctx)
+	if err != nil {
+		return "", err
 	}
 	root := ctx.String("root")
 	if len(root) == 0 {
@@ -187,16 +194,23 @@ func (f *CertificateFlow) Sign(ctx *cli.Context, token string, csr api.Certifica
 	}
 
 	// parse times or durations
-	notBefore, notAfter, err := parseTimeDuration(ctx)
+	notBefore, notAfter, err := flags.ParseTimeDuration(ctx)
+	if err != nil {
+		return err
+	}
+
+	// parse template data
+	templateData, err := flags.ParseTemplateData(ctx)
 	if err != nil {
 		return err
 	}
 
 	req := &api.SignRequest{
-		CsrPEM:    csr,
-		OTT:       token,
-		NotBefore: notBefore,
-		NotAfter:  notAfter,
+		CsrPEM:       csr,
+		OTT:          token,
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		TemplateData: templateData,
 	}
 
 	resp, err := client.Sign(req)
@@ -235,7 +249,7 @@ func (f *CertificateFlow) CreateSignRequest(ctx *cli.Context, tok, subject strin
 		return nil, nil, err
 	}
 
-	dnsNames, ips, emails := splitSANs(sans, jwt.Payload.SANs)
+	dnsNames, ips, emails, uris := splitSANs(sans, jwt.Payload.SANs)
 	switch jwt.Payload.Type() {
 	case token.AWS:
 		doc := jwt.Payload.Amazon.InstanceIdentityDocument
@@ -247,7 +261,7 @@ func (f *CertificateFlow) CreateSignRequest(ctx *cli.Context, tok, subject strin
 			if !sharedContext.DisableCustomSANs {
 				defaultSANs = append(defaultSANs, subject)
 			}
-			dnsNames, ips, emails = splitSANs(defaultSANs)
+			dnsNames, ips, emails, uris = splitSANs(defaultSANs)
 		}
 	case token.GCP:
 		ce := jwt.Payload.Google.ComputeEngine
@@ -259,7 +273,7 @@ func (f *CertificateFlow) CreateSignRequest(ctx *cli.Context, tok, subject strin
 			if !sharedContext.DisableCustomSANs {
 				defaultSANs = append(defaultSANs, subject)
 			}
-			dnsNames, ips, emails = splitSANs(defaultSANs)
+			dnsNames, ips, emails, uris = splitSANs(defaultSANs)
 		}
 	case token.Azure:
 		if len(ips) == 0 && len(dnsNames) == 0 {
@@ -269,13 +283,17 @@ func (f *CertificateFlow) CreateSignRequest(ctx *cli.Context, tok, subject strin
 			if !sharedContext.DisableCustomSANs {
 				defaultSANs = append(defaultSANs, subject)
 			}
-			dnsNames, ips, emails = splitSANs(defaultSANs)
+			dnsNames, ips, emails, uris = splitSANs(defaultSANs)
 		}
 	case token.OIDC:
 		if jwt.Payload.Email != "" {
 			emails = append(emails, jwt.Payload.Email)
 		}
 		subject = jwt.Payload.Subject
+	case token.K8sSA:
+		// Use subject from command line. K8sSA tokens are multi-use so the
+		// subject of the token is not necessarily related to the requested
+		// resource.
 	default: // Use common name in the token
 		subject = jwt.Payload.Subject
 	}
@@ -287,6 +305,7 @@ func (f *CertificateFlow) CreateSignRequest(ctx *cli.Context, tok, subject strin
 		DNSNames:       dnsNames,
 		IPAddresses:    ips,
 		EmailAddresses: emails,
+		URIs:           uris,
 	}
 
 	csr, err := x509.CreateCertificateRequest(rand.Reader, template, pk)
@@ -308,7 +327,7 @@ func (f *CertificateFlow) CreateSignRequest(ctx *cli.Context, tok, subject strin
 
 // splitSANs unifies the SAN collections passed as arguments and returns a list
 // of DNS names, a list of IP addresses, and a list of emails.
-func splitSANs(args ...[]string) (dnsNames []string, ipAddresses []net.IP, email []string) {
+func splitSANs(args ...[]string) (dnsNames []string, ipAddresses []net.IP, email []string, uris []*url.URL) {
 	m := make(map[string]bool)
 	var unique []string
 	for _, sans := range args {
@@ -320,18 +339,4 @@ func splitSANs(args ...[]string) (dnsNames []string, ipAddresses []net.IP, email
 		}
 	}
 	return x509util.SplitSANs(unique)
-}
-
-// parseTimeDuration parses the not-before and not-after flags as a timeDuration
-func parseTimeDuration(ctx *cli.Context) (notBefore api.TimeDuration, notAfter api.TimeDuration, err error) {
-	var zero api.TimeDuration
-	notBefore, err = api.ParseTimeDuration(ctx.String("not-before"))
-	if err != nil {
-		return zero, zero, errs.InvalidFlagValue(ctx, "not-before", ctx.String("not-before"), "")
-	}
-	notAfter, err = api.ParseTimeDuration(ctx.String("not-after"))
-	if err != nil {
-		return zero, zero, errs.InvalidFlagValue(ctx, "not-after", ctx.String("not-after"), "")
-	}
-	return
 }

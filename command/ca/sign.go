@@ -22,8 +22,10 @@ func signCertificateCommand() cli.Command {
 		Action: command.ActionFunc(signCertificateAction),
 		Usage:  "generate a new certificate signing a certificate request",
 		UsageText: `**step ca sign** <csr-file> <crt-file>
-[**--token**=<token>] [**--issuer**=<name>] [**--ca-url**=<uri>] [**--root**=<path>]
+[**--token**=<token>] [**--issuer**=<name>] [**--provisioner-password-file=<file>]
 [**--not-before**=<time|duration>] [**--not-after**=<time|duration>]
+[**--ca-url**=<uri>] [**--root**=<path>]
+[**--set**=<key=value>] [**--set-file**=<path>]
 [**--acme**=<uri>] [**--standalone**] [**--webroot**=<path>]
 [**--contact**=<email>] [**--http-listen**=<address>] [**--console**]
 [**--x5c-cert**=<path>] [**--x5c-key**=<path>]
@@ -64,6 +66,22 @@ NOTE: You must have a X5C provisioner configured (using **step ca provisioner ad
 $ step ca sign foo.internal foo.csr foo.crt --x5c-cert leaf-x5c.crt --x5c-key leaf-x5c.key
 '''
 
+**Certificate Templates** - With a provisioner configured with a custom
+template we can use the **--set** flag to pass user variables:
+'''
+$ step ca sign foo.csr foo.crt --set dnsNames=foo.internal.com
+$ step ca sign foo.csr foo.crt --set dnsNames='["foo.internal.com","bar.internal.com"]'
+'''
+
+Or you can pass them from a file using **--set-file**:
+'''
+$ cat path/to/data.json
+{
+	"dnsNames": ["foo.internal.com","bar.internal.com"]
+}
+$ step ca sign foo.csr foo.crt --set-file path/to/data.json
+'''
+
 **step CA ACME** - In order to use the step CA ACME protocol you must add a
 ACME provisioner to the step CA config. See **step ca provisioner add -h**.
 
@@ -95,8 +113,11 @@ $ step ca sign foo.csr foo.crt \
 			flags.Root,
 			flags.Token,
 			flags.Provisioner,
+			flags.ProvisionerPasswordFile,
 			flags.NotBefore,
 			flags.NotAfter,
+			flags.TemplateSet,
+			flags.TemplateSetFile,
 			flags.Force,
 			flags.Offline,
 			consoleFlag,
@@ -170,7 +191,7 @@ func signCertificateAction(ctx *cli.Context) error {
 		return errors.Wrap(err, "error parsing flag '--token'")
 	}
 	switch jwt.Payload.Type() {
-	case token.AWS, token.GCP, token.Azure:
+	case token.AWS, token.GCP, token.Azure, token.K8sSA:
 		// Common name will be validated on the server side, it depends on
 		// server configuration.
 	default:

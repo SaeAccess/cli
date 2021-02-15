@@ -1,7 +1,6 @@
 package oauth
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -26,6 +25,7 @@ import (
 	"github.com/smallstep/cli/exec"
 	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/jose"
+	"github.com/smallstep/cli/utils"
 	"github.com/urfave/cli"
 )
 
@@ -65,17 +65,23 @@ func init() {
 	cmd := cli.Command{
 		Name:  "oauth",
 		Usage: "authorization and single sign-on using OAuth & OIDC",
-		UsageText: `
-**step oauth** [**--provider**=<provider>] [**--client-id**=<client-id> **--client-secret**=<client-secret>]
-  [**--scope**=<scope> ...] [**--bare** [**--oidc**]] [**--header** [**--oidc**]]
+		UsageText: `**step oauth**
+[**--provider**=<provider>] [**--client-id**=<client-id> **--client-secret**=<client-secret>]
+[**--scope**=<scope> ...] [**--bare** [**--oidc**]] [**--header** [**--oidc**]]
 
-**step oauth** **--authorization-endpoint**=<authorization-endpoint> **--token-endpoint**=<token-endpoint>
-  **--client-id**=<client-id> **--client-secret**=<client-secret> [**--scope**=<scope> ...] [**--bare** [**--oidc**]] [**--header** [**--oidc**]]
+**step oauth** 
+**--authorization-endpoint**=<authorization-endpoint> 
+**--token-endpoint**=<token-endpoint>
+**--client-id**=<client-id> **--client-secret**=<client-secret>
+[**--scope**=<scope> ...] [**--bare** [**--oidc**]] [**--header** [**--oidc**]]
 
-**step oauth** [**--account**=<account>] [**--authorization-endpoint**=<authorization-endpoint> **--token-endpoint**=<token-endpoint>]
-  [**--scope**=<scope> ...] [**--bare** [**--oidc**]] [**--header** [**--oidc**]]
+**step oauth** [**--account**=<account>] 
+[**--authorization-endpoint**=<authorization-endpoint>] 
+[**--token-endpoint**=<token-endpoint>]
+[**--scope**=<scope> ...] [**--bare** [**--oidc**]] [**--header** [**--oidc**]]
 
-**step oauth** **--account**=<account> **--jwt** [**--scope**=<scope> ...] [**--header**] [**-bare**]`,
+**step oauth** **--account**=<account> **--jwt** 
+[**--scope**=<scope> ...] [**--header**] [**-bare**]`,
 		Description: `**step oauth** command implements the OAuth 2.0 authorization flow.
 
 OAuth is an open standard for access delegation, commonly used as a way for
@@ -121,7 +127,7 @@ $ step oauth --oidc --bare
 '''
 
 Use a custom OAuth2.0 server:
-''''
+'''
 $ step oauth --client-id my-client-id --client-secret my-client-secret \
   --provider https://example.org
 '''`,
@@ -193,6 +199,11 @@ $ step oauth --client-id my-client-id --client-secret my-client-secret \
 				Usage:  "Allows the use of insecure flows.",
 				Hidden: true,
 			},
+			cli.StringFlag{
+				Name:   "browser",
+				Usage:  "Path to browser for OAuth flow (macOS only).",
+				Hidden: true,
+			},
 			flags.RedirectURL,
 		},
 		Action: oauthCmd,
@@ -209,6 +220,7 @@ func oauthCmd(c *cli.Context) error {
 		Implicit:         c.Bool("implicit"),
 		CallbackListener: c.String("listen"),
 		TerminalRedirect: c.String("redirect-url"),
+		Browser:          c.String("browser"),
 	}
 	if err := opts.Validate(); err != nil {
 		return err
@@ -337,6 +349,7 @@ type options struct {
 	Implicit         bool
 	CallbackListener string
 	TerminalRedirect string
+	Browser          string
 }
 
 // Validate validates the options.
@@ -368,6 +381,7 @@ type oauth struct {
 	implicit         bool
 	CallbackListener string
 	terminalRedirect string
+	browser          string
 	errCh            chan error
 	tokCh            chan *token
 }
@@ -405,6 +419,7 @@ func newOauth(provider, clientID, clientSecret, authzEp, tokenEp, scope string, 
 			implicit:         opts.Implicit,
 			CallbackListener: opts.CallbackListener,
 			terminalRedirect: opts.TerminalRedirect,
+			browser:          opts.Browser,
 			errCh:            make(chan error),
 			tokCh:            make(chan *token),
 		}, nil
@@ -441,6 +456,7 @@ func newOauth(provider, clientID, clientSecret, authzEp, tokenEp, scope string, 
 			implicit:         opts.Implicit,
 			CallbackListener: opts.CallbackListener,
 			terminalRedirect: opts.TerminalRedirect,
+			browser:          opts.Browser,
 			errCh:            make(chan error),
 			tokCh:            make(chan *token),
 		}, nil
@@ -525,7 +541,7 @@ func (o *oauth) DoLoopbackAuthorization() (*token, error) {
 		return nil, err
 	}
 
-	if err := exec.OpenInBrowser(authURL); err != nil {
+	if err := exec.OpenInBrowser(authURL, o.browser); err != nil {
 		fmt.Fprintln(os.Stderr, "Cannot open a web browser on your platform.")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Open a local web browser and visit:")
@@ -567,8 +583,7 @@ func (o *oauth) DoManualAuthorization() (*token, error) {
 
 	// Read from the command line
 	fmt.Fprint(os.Stderr, "Enter verification code: ")
-	reader := bufio.NewReader(os.Stdin)
-	code, err := reader.ReadString('\n')
+	code, err := utils.ReadString(os.Stdin)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/smallstep/certificates/pki"
 	"github.com/smallstep/cli/crypto/keys"
 	"github.com/smallstep/cli/errs"
+	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/jose"
 	"github.com/smallstep/cli/ui"
 	"github.com/smallstep/cli/utils"
@@ -267,9 +268,9 @@ func finalizeOrder(ac *ca.ACMEClient, o *acme.Order, csr *x509.CertificateReques
 }
 
 func validateSANsForACME(sans []string) ([]string, error) {
-	dnsNames, ips, emails := splitSANs(sans)
-	if len(ips) > 0 || len(emails) > 0 {
-		return nil, errors.New("IP Address and Email Address SANs are not supported for ACME flow")
+	dnsNames, ips, emails, uris := splitSANs(sans)
+	if len(ips) > 0 || len(emails) > 0 || len(uris) > 0 {
+		return nil, errors.New("IP Address, Email Address, and URI SANs are not supported for ACME flow")
 	}
 	for _, dns := range dnsNames {
 		if strings.Contains(dns, "*") {
@@ -346,9 +347,9 @@ func newACMEFlow(ctx *cli.Context, ops ...acmeFlowOp) (*acmeFlow, error) {
 
 	af.acmeDir = ctx.String("acme")
 	if len(af.acmeDir) == 0 {
-		caURL := ctx.String("ca-url")
-		if len(caURL) == 0 {
-			return nil, errs.RequiredFlag(ctx, "ca-url")
+		caURL, err := flags.ParseCaURL(ctx)
+		if err != nil {
+			return nil, err
 		}
 		if len(af.provisionerName) == 0 {
 			return nil, errors.New("acme flow expected provisioner ID")
@@ -418,7 +419,7 @@ func (af *acmeFlow) GetCertificate() ([]*x509.Certificate, error) {
 		}
 		clientOps = append(clientOps, ca.WithRootFile(root))
 		// parse times or durations
-		nbf, naf, err := parseTimeDuration(af.ctx)
+		nbf, naf, err := flags.ParseTimeDuration(af.ctx)
 		if err != nil {
 			return nil, err
 		}

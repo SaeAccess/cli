@@ -22,7 +22,8 @@ func certificateCommand() cli.Command {
 		UsageText: `**step ca certificate** <subject> <crt-file> <key-file>
 [**--token**=<token>]  [**--issuer**=<name>] [**--ca-url**=<uri>] [**--root**=<file>]
 [**--not-before**=<time|duration>] [**--not-after**=<time|duration>]
-[**--san**=<SAN>] [**--acme**=<path>] [**--standalone**] [**--webroot**=<path>]
+[**--san**=<SAN>] [**--set**=<key=value>] [**--set-file**=<path>]
+[**--acme**=<path>] [**--standalone**] [**--webroot**=<path>]
 [**--contact**=<email>] [**--http-listen**=<address>] [**--bundle**]
 [**--kty**=<type>] [**--curve**=<curve>] [**--size**=<size>] [**--console**]
 [**--x5c-cert**=<path>] [**--x5c-key**=<path>] [**--k8ssa-token-path**=<file>`,
@@ -92,6 +93,22 @@ Request a new certificate with an X5C provisioner:
 $ step ca certificate foo.internal foo.crt foo.key --x5c-cert x5c.cert --x5c-key x5c.key
 '''
 
+**Certificate Templates** - With a provisioner configured with a custom
+template we can use the **--set** flag to pass user variables:
+'''
+$ step ca certificate foo.internal foo.crt foo.key --set emailAddresses=root@internal.com
+$ step ca certificate foo.internal foo.crt foo.key --set emailAddresses='["foo@internal.com","root@internal.com"]'
+'''
+
+Or you can pass them from a file using **--set-file**:
+'''
+$ cat path/to/data.json
+{
+	"emailAddresses": ["foo@internal.com","root@internal.com"]
+}
+$ step ca certificate foo.internal foo.crt foo.key --set-file path/to/data.json
+'''
+
 **step CA ACME** - In order to use the step CA ACME protocol you must add a
 ACME provisioner to the step CA config. See **step ca provisioner add -h**.
 
@@ -118,18 +135,20 @@ $ step ca certificate foo.internal foo.crt foo.key \
 --acme https://acme-staging-v02.api.letsencrypt.org/directory --san bar.internal
 '''`,
 		Flags: []cli.Flag{
-			sanFlag,
+			cli.StringSliceFlag{
+				Name: "san",
+				Usage: `Add <dns|ip|email|uri> Subject Alternative Name(s) (SANs)
+that should be authorized. Use the '--san' flag multiple times to configure
+multiple SANs. The '--san' flag and the '--token' flag are mutually exclusive.`,
+			},
+			flags.TemplateSet,
+			flags.TemplateSetFile,
 			flags.CaConfig,
 			flags.CaURL,
 			flags.Root,
 			flags.Token,
 			flags.Provisioner,
-			cli.StringFlag{
-				Name: "provisioner-password-file",
-				Usage: `The path to the <file> containing the password to decrypt the one-time token
-				generating key.`,
-			},
-			flags.PasswordFile,
+			flags.ProvisionerPasswordFile,
 			flags.KTY,
 			flags.Curve,
 			flags.Size,
@@ -162,17 +181,12 @@ func certificateAction(ctx *cli.Context) error {
 	tok := ctx.String("token")
 	offline := ctx.Bool("offline")
 	sans := ctx.StringSlice("san")
-	provisionerPasswordFile := ctx.String("provisioner-password-file")
 
 	// offline and token are incompatible because the token is generated before
 	// the start of the offline CA.
 	if offline && len(tok) != 0 {
 		return errs.IncompatibleFlagWithFlag(ctx, "offline", "token")
 	}
-
-	// Hack to make the flag "password-file" the content of
-	// "provisioner-password-file" so the token command works as expected
-	ctx.Set("password-file", provisionerPasswordFile)
 
 	// certificate flow unifies online and offline flows on a single api
 	flow, err := cautils.NewCertificateFlow(ctx)

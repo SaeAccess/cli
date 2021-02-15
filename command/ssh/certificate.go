@@ -21,7 +21,6 @@ import (
 	"github.com/smallstep/cli/crypto/sshutil"
 	"github.com/smallstep/cli/errs"
 	"github.com/smallstep/cli/flags"
-	"github.com/smallstep/cli/jose"
 	"github.com/smallstep/cli/ui"
 	"github.com/smallstep/cli/utils"
 	"github.com/smallstep/cli/utils/cautils"
@@ -157,6 +156,8 @@ $ step ssh certificate --token $TOKEN mariano@work id_ecdsa
 			flags.Offline,
 			flags.Provisioner,
 			flags.Token,
+			flags.TemplateSet,
+			flags.TemplateSetFile,
 			sshAddUserFlag,
 			sshHostFlag,
 			sshHostIDFlag,
@@ -198,6 +199,10 @@ func certificateAction(ctx *cli.Context) error {
 	insecure := ctx.Bool("insecure")
 	sshPrivKeyFile := ctx.String("private-key")
 	validAfter, validBefore, err := flags.ParseTimeDuration(ctx)
+	if err != nil {
+		return err
+	}
+	templateData, err := flags.ParseTemplateData(ctx)
 	if err != nil {
 		return err
 	}
@@ -246,7 +251,7 @@ func certificateAction(ctx *cli.Context) error {
 		if isHost {
 			principals = append(principals, subject)
 		} else {
-			principals = append(principals, provisioner.SanitizeSSHUserPrincipal(subject))
+			principals = createPrincipalsFromSubject(subject)
 		}
 	}
 
@@ -309,15 +314,14 @@ func certificateAction(ctx *cli.Context) error {
 				return errs.Wrap(err, "failed parsing uuid urn")
 			}
 
-			// Hack to add the URI.
-			// TODO: the proper solution would be to add support in
-			// x509util.SplitSANs.
 			template := &x509.CertificateRequest{
 				Subject:        csr.Subject,
 				DNSNames:       csr.DNSNames,
 				IPAddresses:    csr.IPAddresses,
 				EmailAddresses: csr.EmailAddresses,
-				URIs:           []*url.URL{uri},
+				// Prepend the generated uri. There is code that expects the
+				// uuid URI to be the first one.
+				URIs: append([]*url.URL{uri}, csr.URIs...),
 			}
 			csrBytes, err := x509.CreateCertificateRequest(rand.Reader, template, key)
 			if err != nil {
@@ -384,23 +388,6 @@ func certificateAction(ctx *cli.Context) error {
 		sshAuPubBytes = sshAuPub.Marshal()
 	}
 
-	// NOTE: For OIDC token the principals should be completely empty unless
-	// defined explicitly on the command line using the `--principal` flag.
-	// The OIDC provisioner is responsible for setting default principals by
-	// using an identity function.
-	j, err := jose.ParseSigned(token)
-	if err != nil {
-		return errors.Wrap(err, "error parsing token")
-	}
-	var payload oidcPayload
-	if err := j.UnsafeClaimsWithoutVerification(&payload); err != nil {
-		return errors.Wrap(err, "err parsing token claims")
-	}
-	// If it's an OIDC token and and no principals were explicitly set ...
-	if len(payload.Email) > 0 && !ctx.IsSet("principal") {
-		principals = []string{}
-	}
-
 	resp, err := caClient.SSHSign(&api.SSHSignRequest{
 		PublicKey:        sshPub.Marshal(),
 		OTT:              token,
@@ -411,6 +398,7 @@ func certificateAction(ctx *cli.Context) error {
 		ValidBefore:      validBefore,
 		AddUserPublicKey: sshAuPubBytes,
 		IdentityCSR:      identityCSR,
+		TemplateData:     templateData,
 	})
 	if err != nil {
 		return err
@@ -501,12 +489,6 @@ func marshalPublicKey(key ssh.PublicKey, subject string) []byte {
 		return append(b[:i], []byte(" "+subject+"\n")...)
 	}
 	return append(b, []byte(" "+subject+"\n")...)
-}
-
-// oidcPayload is a payload used to determine if a JWT is an OIDC token.
-type oidcPayload struct {
-	jose.Claims
-	Email string `json:"email"` // OIDC indicator
 }
 
 func deriveMachineID() (uuid.UUID, error) {

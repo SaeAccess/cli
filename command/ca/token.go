@@ -27,6 +27,7 @@ func tokenCommand() cli.Command {
 		Usage:  "generate an OTT granting access to the CA",
 		UsageText: `**step ca token** <subject>
 [--**kid**=<kid>] [--**issuer**=<name>] [**--ca-url**=<uri>] [**--root**=<path>]
+[**--cert-not-before**=<time|duration>] [**--cert-not-after**=<time|duration>]
 [**--not-before**=<time|duration>] [**--not-after**=<time|duration>]
 [**--password-file**=<path>] [**--output-file**=<path>] [**--key**=<path>]
 [**--san**=<SAN>] [**--offline**] [**--revoke**]
@@ -72,7 +73,7 @@ $ step ca token 192.168.10.10
 
 Get a new token with custom Subject Alternative Names. The value of the 'sans'
 claim of the token will be ['1.1.1.1', 'hello.example.com'] - 'foobar' will not
-be in the 'sans' claim unless explicitly configured via the '--sans' flag:
+be in the 'sans' claim unless explicitly configured via the '--san' flag:
 '''
 $ step ca token foobar --san 1.1.1.1 --san hello.example.com
 '''
@@ -130,20 +131,31 @@ $ step ca token --offline --revoke 146103349666685108195655980390445292315
 
 Get a new token for an SSH user certificate:
 '''
-$ step ca token max@smallstep.com max_ecdsa --ssh
+$ step ca token max@smallstep.com --ssh
 '''
 
 Get a new token for an SSH host certificate:
 '''
-$ step ca token my-remote.hostname remote_ecdsa --ssh --host
+$ step ca token my-remote.hostname --ssh --host
 '''`,
 		Flags: []cli.Flag{
 			certNotAfterFlag,
 			certNotBeforeFlag,
-			passwordFileFlag,
 			provisionerKidFlag,
-			sanFlag,
-			sshPrincipalFlag,
+			cli.StringSliceFlag{
+				Name: "san",
+				Usage: `Add <dns|ip|email|uri> Subject Alternative Name(s) (SANs)
+that should be authorized. A certificate signing request using this token must
+match the complete set of SANs in the token 1:1. Use the '--san' flag multiple
+times to configure multiple SANs.`,
+			},
+			cli.StringSliceFlag{
+				Name: "principal,n",
+				Usage: `Add the principals (user or host <name>s) that the token is authorized to
+request. The signing request using this token won't be able to add
+extra names. Use the '--principal' flag multiple times to configure
+multiple principals.`,
+			},
 			sshHostFlag,
 			flags.CaURL,
 			flags.CaConfig,
@@ -153,6 +165,7 @@ $ step ca token my-remote.hostname remote_ecdsa --ssh --host
 			flags.Offline,
 			flags.Root,
 			flags.Provisioner,
+			flags.ProvisionerPasswordFileWithAlias,
 			flags.X5cCert,
 			flags.X5cKey,
 			flags.SSHPOPCert,
@@ -247,9 +260,9 @@ func tokenAction(ctx *cli.Context) error {
 		}
 	}
 
-	caURL := ctx.String("ca-url")
-	if len(caURL) == 0 {
-		return errs.RequiredFlag(ctx, "ca-url")
+	caURL, err := flags.ParseCaURL(ctx)
+	if err != nil {
+		return err
 	}
 
 	root := ctx.String("root")

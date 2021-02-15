@@ -7,6 +7,7 @@ import (
 	"github.com/smallstep/certificates/authority"
 	"github.com/smallstep/certificates/authority/provisioner"
 	"github.com/smallstep/cli/errs"
+	"github.com/smallstep/cli/ui"
 	"github.com/urfave/cli"
 )
 
@@ -16,7 +17,7 @@ func removeCommand() cli.Command {
 		Action: cli.ActionFunc(removeAction),
 		Usage:  "remove one, or more, provisioners from the CA configuration",
 		UsageText: `**step ca provisioner remove** <name>
-		[**--kid**=<kid>] [**--config**=<file>] [**--all**]`,
+[**--kid**=<kid>] [**--config**=<file>] [**--all**]`,
 		Flags: []cli.Flag{
 			cli.StringFlag{
 				Name:  "ca-config",
@@ -66,6 +67,9 @@ and must be one of:
 		},
 		Description: `**step ca provisioner remove** removes one or more provisioners
 from the configuration and writes the new configuration back to the CA config.
+
+To pick up the new configuration you must SIGHUP (kill -1 <pid>) or restart the
+step-ca process.
 
 ## POSITIONAL ARGUMENTS
 
@@ -193,7 +197,13 @@ func removeAction(ctx *cli.Context) error {
 	}
 
 	c.AuthorityConfig.Provisioners = provisioners
-	return c.Save(config)
+	if err = c.Save(config); err != nil {
+		return err
+	}
+
+	ui.Println("Success! Your `step-ca` config has been updated. To pick up the new configuration SIGHUP (kill -1 <pid>) or restart the step-ca process.")
+
+	return nil
 }
 
 // isProvisionerType returns true if p.GetType() is equal to typ. If typ is

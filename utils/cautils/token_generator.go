@@ -102,8 +102,9 @@ func (t *TokenGenerator) RevokeToken(sub string, opts ...token.Options) (string,
 
 // SignSSHToken generates a SSH certificate signing token.
 func (t *TokenGenerator) SignSSHToken(sub, certType string, principals []string, notBefore, notAfter provisioner.TimeDuration, opts ...token.Options) (string, error) {
-	opts = append([]token.Options{token.WithSSH(provisioner.SSHOptions{
+	opts = append([]token.Options{token.WithSSH(provisioner.SignSSHOptions{
 		CertType:    certType,
+		KeyID:       sub,
 		Principals:  principals,
 		ValidAfter:  notBefore,
 		ValidBefore: notAfter,
@@ -235,8 +236,11 @@ func generateSSHPOPToken(ctx *cli.Context, p *provisioner.SSHPOP, tokType int, t
 //    b) Online-mode: get the provisioner private key from the CA.
 func loadJWK(ctx *cli.Context, p *provisioner.JWK, tokAttrs tokenAttrs) (jwk *jose.JSONWebKey, kid string, err error) {
 	var opts []jose.Option
-	if passwordFile := ctx.String("password-file"); len(passwordFile) != 0 {
-		opts = append(opts, jose.WithPasswordFile(passwordFile))
+	switch {
+	case ctx.String("provisioner-password-file") != "":
+		opts = append(opts, jose.WithPasswordFile(ctx.String("provisioner-password-file")))
+	case ctx.String("password-file") != "":
+		opts = append(opts, jose.WithPasswordFile(ctx.String("password-file")))
 	}
 
 	if keyFile := ctx.String("key"); len(keyFile) == 0 {
